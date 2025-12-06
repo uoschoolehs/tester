@@ -86,6 +86,29 @@
       color: white;
     }
 
+    .game-selector {
+      background: white;
+      border-radius: 12px;
+      padding: 10px 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .game-selector label {
+      font-weight: 600;
+      color: #006554;
+    }
+
+    .game-selector select {
+      padding: 8px 12px;
+      border: 2px solid #006554;
+      border-radius: 8px;
+      font-size: 14px;
+      cursor: pointer;
+      background: white;
+    }
+
     .stats-container {
       background: white;
       border-radius: 16px;
@@ -221,19 +244,29 @@
 <body>
   <div class="container">
     <header>
-      <h1> Essex High School Junior Varsity <br> Hornets Basketball Stats <br> (Scrimmags only so far) </h1>
+      <h1>Essex High School Junior Varsity<br>Hornets Basketball Stats<br>(Scrimmags only so far)</h1>
       <div class="record" id="record">Loading...</div>
       <div class="last-updated" id="lastUpdated"></div>
     </header>
 
     <div class="controls">
       <div class="btn-group">
-        <button class="btn active" data-view="averages">Averages</button>
-        <button class="btn" data-view="totals">Totals</button>
+        <button class="btn active" data-view="season">Season</button>
+        <button class="btn" data-view="game">Game Log</button>
+      </div>
+      <div class="btn-group" id="seasonViewGroup">
+        <button class="btn active" data-subview="averages">Averages</button>
+        <button class="btn" data-subview="totals">Totals</button>
       </div>
       <div class="btn-group" id="statsTypeGroup">
         <button class="btn active" data-stats="standard">Standard</button>
         <button class="btn" data-stats="advanced">Advanced</button>
+      </div>
+      <div class="game-selector" id="gameSelector" style="display: none;">
+        <label for="gameSelect">Game:</label>
+        <select id="gameSelect">
+          <option value="">Select a game...</option>
+        </select>
       </div>
     </div>
 
@@ -250,57 +283,37 @@
   </div>
 
   <script>
-    // Configuration
     const FIREBASE_URL = 'https://ehs-jv-stats-default-rtdb.firebaseio.com';
     const TEAM_ID = 'ehs-jv-hornets';
 
     let currentData = null;
-    let currentView = 'averages';
+    let currentView = 'season';
+    let currentSubView = 'averages';
     let currentStats = 'standard';
     let sortState = {};
     let originalOrder = [];
     let dataHash = '';
     let refreshNotification = null;
+    let gameLogs = [];
+    let selectedGameId = null;
 
-    // Column order for each stat type
     const COLUMN_ORDER = {
       standardAverages: ['Player', 'GP', 'PTS', 'REB', 'AST', 'STL', 'BLK', 'PF', 'FG%', '3PT%', 'FT%', 'TO'],
       standardTotals: ['Player', 'GP', 'GS', 'PTS', 'REB', 'AST', 'STL', 'BLK', 'PF', 'FG', '3PT', 'FT', 'TO'],
+      gameLog: ['Player', 'PTS', 'REB', 'AST', 'STL', 'BLK', 'PF', 'FG', '3PT', 'FT', 'TO'],
       advanced: ['Player', 'GP', 'eFG%', 'TS%', 'AST/TO']
     };
 
-    // Map GameChanger column names to our desired names
     const COLUMN_MAPPING = {
-      'PLAYER': 'Player',
-      'Player': 'Player',
-      'GP': 'GP',
-      'GS': 'GS',
-      'PPG': 'PTS',
-      'PTS': 'PTS',
-      'PFPG': 'PF',
-      'PF': 'PF',
-      'RPG': 'REB',
-      'REB': 'REB',
-      'APG': 'AST',
-      'AST': 'AST',
-      'SPG': 'STL',
-      'STL': 'STL',
-      'BPG': 'BLK',
-      'BLK': 'BLK',
-      'TOPG': 'TO',
-      'TO': 'TO',
-      'FGPct': 'FG%',
-      'FG': 'FG%',
-      '3PTPct': '3PT%',
-      '3PT': '3PT%',
-      'FTPct': 'FT%',
-      'FT': 'FT%',
-      'eFGPct': 'eFG%',
-      'TSPct': 'TS%',
-      'AST_TO': 'AST/TO'
+      'PLAYER': 'Player', 'Player': 'Player', 'GP': 'GP', 'GS': 'GS',
+      'PPG': 'PTS', 'PTS': 'PTS', 'PFPG': 'PF', 'PF': 'PF',
+      'RPG': 'REB', 'REB': 'REB', 'APG': 'AST', 'AST': 'AST',
+      'SPG': 'STL', 'STL': 'STL', 'BPG': 'BLK', 'BLK': 'BLK',
+      'TOPG': 'TO', 'TO': 'TO', 'FGPct': 'FG%', 'FG': 'FG%',
+      '3PTPct': '3PT%', '3PT': '3PT%', 'FTPct': 'FT%', 'FT': 'FT%',
+      'eFGPct': 'eFG%', 'TSPct': 'TS%', 'AST_TO': 'AST/TO'
     };
 
-    // Fetch stats from Firebase
     async function fetchStats(forceUpdate = false) {
       try {
         const response = await fetch(`${FIREBASE_URL}/teams/${TEAM_ID}.json`);
@@ -309,20 +322,17 @@
         const data = await response.json();
         const newHash = JSON.stringify(data);
         
-        // Check if data changed
-        if (!forceUpdate && dataHash && newHash === dataHash) {
-          return; // No changes, don't update
-        }
+        if (!forceUpdate && dataHash && newHash === dataHash) return;
         
-        // Data changed or first load
         if (dataHash && newHash !== dataHash && !forceUpdate) {
-          // Show notification for new data
+          await createSnapshot(currentData);
           showRefreshNotification();
           return;
         }
         
         dataHash = newHash;
         currentData = data;
+        await loadGameLogs();
         updateHeader(data);
         renderTable();
         hideRefreshNotification();
@@ -337,10 +347,152 @@
       }
     }
 
+    async function createSnapshot(data) {
+      if (!data || !data.standardTotals) return;
+      
+      const timestamp = Date.now();
+      const snapshot = {
+        timestamp,
+        date: new Date(timestamp).toISOString(),
+        players: {}
+      };
+
+      data.standardTotals.forEach(player => {
+        const playerName = player.Player || player.PLAYER;
+        if (!playerName) return;
+        
+        snapshot.players[playerName] = {
+          GP: player.GP || 0,
+          PTS: player.PTS || 0,
+          REB: player.REB || 0,
+          AST: player.AST || 0,
+          STL: player.STL || 0,
+          BLK: player.BLK || 0,
+          PF: player.PF || 0,
+          TO: player.TO || 0,
+          FG: player['FG'] || player['FG%'] || '0-0',
+          '3PT': player['3PT'] || player['3PT%'] || '0-0',
+          FT: player['FT'] || player['FT%'] || '0-0'
+        };
+      });
+
+      try {
+        await fetch(`${FIREBASE_URL}/teams/${TEAM_ID}/snapshots/${timestamp}.json`, {
+          method: 'PUT',
+          body: JSON.stringify(snapshot)
+        });
+        console.log('Snapshot created:', timestamp);
+      } catch (error) {
+        console.error('Failed to create snapshot:', error);
+      }
+    }
+
+    async function loadGameLogs() {
+      try {
+        const response = await fetch(`${FIREBASE_URL}/teams/${TEAM_ID}/snapshots.json`);
+        if (!response.ok) {
+          gameLogs = [];
+          return;
+        }
+        
+        const snapshots = await response.json();
+        if (!snapshots) {
+          gameLogs = [];
+          return;
+        }
+
+        const snapshotArray = Object.entries(snapshots)
+          .map(([id, data]) => ({ id, ...data }))
+          .sort((a, b) => a.timestamp - b.timestamp);
+
+        gameLogs = [];
+        
+        for (let i = 1; i < snapshotArray.length; i++) {
+          const prev = snapshotArray[i - 1];
+          const curr = snapshotArray[i];
+          
+          const gameLog = {
+            id: curr.id,
+            timestamp: curr.timestamp,
+            date: curr.date,
+            gameNumber: i,
+            players: []
+          };
+
+          const allPlayers = new Set([
+            ...Object.keys(prev.players || {}),
+            ...Object.keys(curr.players || {})
+          ]);
+
+          allPlayers.forEach(playerName => {
+            const prevStats = prev.players[playerName] || {};
+            const currStats = curr.players[playerName] || {};
+            
+            const prevGP = parseInt(prevStats.GP) || 0;
+            const currGP = parseInt(currStats.GP) || 0;
+            
+            if (currGP <= prevGP) return;
+
+            const parseShooting = (str) => {
+              if (!str || typeof str !== 'string') return { made: 0, att: 0 };
+              if (str.includes('-')) {
+                const [m, a] = str.split('-').map(x => parseInt(x) || 0);
+                return { made: m, att: a };
+              }
+              return { made: 0, att: 0 };
+            };
+
+            const prevFG = parseShooting(prevStats.FG);
+            const currFG = parseShooting(currStats.FG);
+            const prev3PT = parseShooting(prevStats['3PT']);
+            const curr3PT = parseShooting(currStats['3PT']);
+            const prevFT = parseShooting(prevStats.FT);
+            const currFT = parseShooting(currStats.FT);
+
+            gameLog.players.push({
+              Player: playerName,
+              PTS: (parseInt(currStats.PTS) || 0) - (parseInt(prevStats.PTS) || 0),
+              REB: (parseInt(currStats.REB) || 0) - (parseInt(prevStats.REB) || 0),
+              AST: (parseInt(currStats.AST) || 0) - (parseInt(prevStats.AST) || 0),
+              STL: (parseInt(currStats.STL) || 0) - (parseInt(prevStats.STL) || 0),
+              BLK: (parseInt(currStats.BLK) || 0) - (parseInt(prevStats.BLK) || 0),
+              PF: (parseInt(currStats.PF) || 0) - (parseInt(prevStats.PF) || 0),
+              TO: (parseInt(currStats.TO) || 0) - (parseInt(prevStats.TO) || 0),
+              FG: `${currFG.made - prevFG.made}-${currFG.att - prevFG.att}`,
+              '3PT': `${curr3PT.made - prev3PT.made}-${curr3PT.att - prev3PT.att}`,
+              FT: `${currFT.made - prevFT.made}-${currFT.att - prevFT.att}`
+            });
+          });
+
+          if (gameLog.players.length > 0) {
+            gameLogs.push(gameLog);
+          }
+        }
+
+        updateGameSelector();
+      } catch (error) {
+        console.error('Failed to load game logs:', error);
+        gameLogs = [];
+      }
+    }
+
+    function updateGameSelector() {
+      const select = document.getElementById('gameSelect');
+      select.innerHTML = '<option value="">Select a game...</option>';
+      
+      gameLogs.forEach((game, index) => {
+        const date = new Date(game.timestamp);
+        const option = document.createElement('option');
+        option.value = game.id;
+        option.textContent = `Game ${game.gameNumber} - ${date.toLocaleDateString()}`;
+        select.appendChild(option);
+      });
+    }
+
     function showRefreshNotification() {
       if (refreshNotification) return;
       refreshNotification = document.createElement('div');
-      refreshNotification.style.cssText = 'position:fixed;top:20px;right:20px;background:#00F092;color:#006554;padding:15px 25px;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,0.3);font-weight:600;cursor:pointer;z-index:1000;animation:slideIn 0.3s ease;';
+      refreshNotification.style.cssText = 'position:fixed;top:20px;right:20px;background:#00F092;color:#006554;padding:15px 25px;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,0.3);font-weight:600;cursor:pointer;z-index:1000;';
       refreshNotification.innerHTML = '🔄 New Stats Available - Click to Reload';
       refreshNotification.onclick = () => fetchStats(true);
       document.body.appendChild(refreshNotification);
@@ -353,24 +505,19 @@
       }
     }
 
-    // Update header with team info
     function updateHeader(data) {
       document.getElementById('record').textContent = data.record || '0-0';
-      
       if (data.lastUpdated) {
         const date = new Date(data.lastUpdated);
-        document.getElementById('lastUpdated').textContent = 
-          `Last updated: ${date.toLocaleString()}`;
+        document.getElementById('lastUpdated').textContent = `Last updated: ${date.toLocaleString()}`;
       }
     }
 
-    // Extract jersey number from player name
     function getJerseyNumber(playerName) {
       const match = playerName.match(/#(\d+)/);
       return match ? parseInt(match[1]) : 999;
     }
 
-    // Sort data by jersey number (default)
     function sortByJerseyNumber(stats) {
       return [...stats].sort((a, b) => {
         const numA = getJerseyNumber(a.Player || '');
@@ -379,17 +526,14 @@
       });
     }
 
-    // Reorder columns to match desired format
     function reorderColumns(stats, columnOrder) {
       return stats.map(player => {
         const reordered = {};
         columnOrder.forEach(col => {
           let value = '';
-          
-          // Special handling for totals shooting stats without %
-          // If looking for 'FG', '3PT', or 'FT', check for the percentage version in source data
           let searchCol = col;
-          if (currentView === 'totals' && (col === 'FG' || col === '3PT' || col === 'FT')) {
+          
+          if (currentView === 'season' && currentSubView === 'totals' && (col === 'FG' || col === '3PT' || col === 'FT')) {
             searchCol = col + '%';
           }
           
@@ -400,230 +544,142 @@
             }
           }
           
+          if (value === '' && player[col] !== undefined) {
+            value = player[col];
+          }
+          
           reordered[col] = value;
         });
         return reordered;
       });
     }
 
-    // Sort by column (cycles through: none -> desc -> asc -> none)
-function sortByColumn(stats, columnName, currentState) {
-  const newState = currentState === 'none' ? 'desc' : 
-                   currentState === 'desc' ? 'asc' : 'none';
-  
-  if (newState === 'none') {
-    return { data: [...originalOrder], state: 'none' };
-  }
-
-  const sorted = [...stats].sort((a, b) => {
-    let valA = a[columnName];
-    let valB = b[columnName];
-
-    // Special handling for shooting splits (FG, 3PT, FT) - ONLY in Totals view with dash format
-    if (currentView === 'totals' && (columnName === 'FG' || columnName === '3PT' || columnName === 'FT')) {
+    function sortByColumn(stats, columnName, currentState) {
+      const newState = currentState === 'none' ? 'desc' : 
+                       currentState === 'desc' ? 'asc' : 'none';
       
-      const parseShootingStat = (val) => {
-        if (!val || typeof val !== 'string') return { made: 0, attempts: 0 };
-        
-        // Handle "X-Y" format
-        if (val.includes('-')) {
-          const [made, attempts] = val.split('-').map(v => parseInt(v) || 0);
-          return { made, attempts };
-        } else {
-          // Handle percentage format (e.g., "45.6%")
-          return { made: 0, attempts: 0 };
-        }
-      };
-
-      const statsA = parseShootingStat(valA);
-      const statsB = parseShootingStat(valB);
-
-      // If either is 0-0, handle specially
-      const aIsZeroZero = statsA.attempts === 0;
-      const bIsZeroZero = statsB.attempts === 0;
-      
-      if (aIsZeroZero && bIsZeroZero) return 0;
-      if (aIsZeroZero) return 1;  // Move a to bottom
-      if (bIsZeroZero) return -1; // Move b to bottom
-
-      // First compare made shots
-      if (statsA.made !== statsB.made) {
-        return newState === 'desc' ? 
-          statsB.made - statsA.made : 
-          statsA.made - statsB.made;
+      if (newState === 'none') {
+        return { data: [...originalOrder], state: 'none' };
       }
 
-      // If made shots are equal, compare attempts (fewer attempts ranks higher)
-      return newState === 'desc' ? 
-        statsA.attempts - statsB.attempts : 
-        statsB.attempts - statsA.attempts;
-    }
+      const sorted = [...stats].sort((a, b) => {
+        let valA = a[columnName];
+        let valB = b[columnName];
 
-    // Handle non-shooting stat columns as before
-    const numA = parseFloat(String(valA).replace('%', ''));
-    const numB = parseFloat(String(valB).replace('%', ''));
+        if (currentView === 'season' && currentSubView === 'totals' && (columnName === 'FG' || columnName === '3PT' || columnName === 'FT')) {
+          const parseShootingStat = (val) => {
+            if (!val || typeof val !== 'string') return { made: 0, attempts: 0 };
+            if (val.includes('-')) {
+              const [made, attempts] = val.split('-').map(v => parseInt(v) || 0);
+              return { made, attempts };
+            }
+            return { made: 0, attempts: 0 };
+          };
 
-    if (!isNaN(numA) && !isNaN(numB)) {
-      return newState === 'desc' ? numB - numA : numA - numB;
-    }
+          const statsA = parseShootingStat(valA);
+          const statsB = parseShootingStat(valB);
 
-    const strA = String(valA).toLowerCase();
-    const strB = String(valB).toLowerCase();
-    return newState === 'desc' ? 
-      strB.localeCompare(strA) : 
-      strA.localeCompare(strB);
-  });
+          if (statsA.attempts === 0 && statsB.attempts === 0) return 0;
+          if (statsA.attempts === 0) return 1;
+          if (statsB.attempts === 0) return -1;
 
-  return { data: sorted, state: newState };
-}
-
-    // Calculate totals from individual player stats
-    function calculateTotalsFromPlayers(stats, columns) {
-      const totals = {};
-      
-      columns.forEach(col => {
-        if (col === 'Player') {
-          totals[col] = 'Team';
-        } else if (col === 'GP') {
-          if (currentData.teamStandardAverages && currentData.teamStandardAverages.GP) {
-            totals.GP = currentData.teamStandardAverages.GP;
-          } else {
-            totals.GP = '';
+          if (statsA.made !== statsB.made) {
+            return newState === 'desc' ? statsB.made - statsA.made : statsA.made - statsB.made;
           }
-        } else if (col === 'GS') {
-          totals.GS = '';
-        } else if (col === 'FG' || col === '3PT' || col === 'FT') {
-          let totalMade = 0;
-          let totalAttempted = 0;
-          
-          stats.forEach((player) => {
-            const value = player[col];
-            if (value && typeof value === 'string' && value.includes('-')) {
-              const parts = value.split('-');
-              const made = parseInt(parts[0]) || 0;
-              const attempted = parseInt(parts[1]) || 0;
-              totalMade += made;
-              totalAttempted += attempted;
-            }
-          });
-          
-          totals[col] = `${totalMade}-${totalAttempted}`;
-        } else {
-          let sum = 0;
-          stats.forEach(player => {
-            const value = player[col];
-            const numValue = parseFloat(value);
-            if (!isNaN(numValue)) {
-              sum += numValue;
-            }
-          });
-          totals[col] = sum;
+
+          return newState === 'desc' ? statsA.attempts - statsB.attempts : statsB.attempts - statsA.attempts;
         }
+
+        const numA = parseFloat(String(valA).replace('%', ''));
+        const numB = parseFloat(String(valB).replace('%', ''));
+
+        if (!isNaN(numA) && !isNaN(numB)) {
+          return newState === 'desc' ? numB - numA : numA - numB;
+        }
+
+        const strA = String(valA).toLowerCase();
+        const strB = String(valB).toLowerCase();
+        return newState === 'desc' ? strB.localeCompare(strA) : strA.localeCompare(strB);
       });
-      
-      return totals;
+
+      return { data: sorted, state: newState };
     }
 
-    // Render table body
-    function renderTableBody(stats, columns) {
-      const tbody = document.getElementById('tableBody');
-      
-      // Get team stats from Firebase
-      let teamStats = null;
-      if (currentStats === 'standard' && currentView === 'averages' && currentData.teamStandardAverages) {
-        teamStats = currentData.teamStandardAverages;
-      } else if (currentStats === 'standard' && currentView === 'totals') {
-        // For Totals/Standard, calculate from player stats instead of using database
-        teamStats = calculateTotalsFromPlayers(stats, columns);
-      } else if (currentStats === 'advanced' && currentView === 'averages' && currentData.teamAdvancedAverages) {
-        teamStats = currentData.teamAdvancedAverages;
-      }
-      
-      let rows = stats.map(player => `
-        <tr>
-          ${columns.map((col, idx) => {
-            const value = player[col];
-            const isPlayerName = idx === 0;
-            const className = isPlayerName ? 'player-name' : '';
-            return `<td class="${className}">${value}</td>`;
-          }).join('')}
-        </tr>
-      `).join('');
-
-      // Add team row if we have team stats
-      if (teamStats) {
-        const reorderedTeam = {};
-        columns.forEach(col => {
-          if (col === 'Player') {
-            reorderedTeam[col] = 'TEAM';
-          } else if (teamStats[col] !== undefined) {
-            // If teamStats already has the column name directly (from calculateTotalsFromPlayers), use it
-            reorderedTeam[col] = teamStats[col];
-          } else {
-            // Otherwise, try to map from GameChanger column names
-            let value = '';
-            for (const [sourceCol, targetCol] of Object.entries(COLUMN_MAPPING)) {
-              if (targetCol === col && teamStats[sourceCol] !== undefined) {
-                value = teamStats[sourceCol];
-                break;
-              }
-            }
-            reorderedTeam[col] = value;
-          }
-        });
-
-        rows += `
-          <tr style="border-top: 2px solid #006554; font-weight: 700; background: #f8f9fa;">
-            ${columns.map((col, idx) => {
-              const value = reorderedTeam[col];
-              const isTeamName = idx === 0;
-              const className = isTeamName ? 'player-name' : '';
-              return `<td class="${className}">${value}</td>`;
-            }).join('')}
-          </tr>
-        `;
-      }
-
-      tbody.innerHTML = rows;
-    }
-
-    // Render the stats table
     function renderTable() {
       const table = document.getElementById('statsTable');
       const loading = document.querySelector('.loading');
       
-      if (!currentData) {
+      if (!currentData && currentView === 'season') {
         loading.style.display = 'block';
         table.style.display = 'none';
         return;
       }
 
+      if (currentView === 'game') {
+        if (!selectedGameId) {
+          loading.innerHTML = '<div class="no-stats"><h2>Select a game</h2><p>Choose a game from the dropdown above</p></div>';
+          loading.style.display = 'block';
+          table.style.display = 'none';
+          return;
+        }
+
+        const gameLog = gameLogs.find(g => g.id === selectedGameId);
+        if (!gameLog || gameLog.players.length === 0) {
+          loading.innerHTML = '<div class="no-stats"><h2>No stats for this game</h2></div>';
+          loading.style.display = 'block';
+          table.style.display = 'none';
+          return;
+        }
+
+        let stats = sortByJerseyNumber(gameLog.players);
+        originalOrder = [...stats];
+        
+        sortState = {};
+        COLUMN_ORDER.gameLog.forEach(col => sortState[col] = 'none');
+
+        const thead = document.getElementById('tableHeader');
+        thead.innerHTML = `<tr>${COLUMN_ORDER.gameLog.map(col => `<th data-column="${col}">${col}</th>`).join('')}</tr>`;
+
+        thead.querySelectorAll('th').forEach(th => {
+          th.addEventListener('click', () => {
+            const columnName = th.dataset.column;
+            const result = sortByColumn(stats, columnName, sortState[columnName]);
+            stats = result.data;
+            sortState[columnName] = result.state;
+            
+            thead.querySelectorAll('th').forEach(h => h.classList.remove('sorted-asc', 'sorted-desc'));
+            if (result.state === 'asc') th.classList.add('sorted-asc');
+            else if (result.state === 'desc') th.classList.add('sorted-desc');
+            
+            renderTableBody(stats, COLUMN_ORDER.gameLog);
+          });
+        });
+
+        renderTableBody(stats, COLUMN_ORDER.gameLog);
+        loading.style.display = 'none';
+        table.style.display = 'table';
+        return;
+      }
+
+      // Season view logic
       let dataKey = '';
       let selectedColumnOrder = [];
       
-      if (currentStats === 'standard' && currentView === 'averages') {
+      if (currentStats === 'standard' && currentSubView === 'averages') {
         dataKey = 'standardAverages';
         selectedColumnOrder = COLUMN_ORDER.standardAverages;
-      } else if (currentStats === 'standard' && currentView === 'totals') {
+      } else if (currentStats === 'standard' && currentSubView === 'totals') {
         dataKey = 'standardTotals';
         selectedColumnOrder = COLUMN_ORDER.standardTotals;
-      } else if (currentStats === 'advanced' && currentView === 'averages') {
+      } else if (currentStats === 'advanced') {
         dataKey = 'advancedAverages';
-        selectedColumnOrder = COLUMN_ORDER.advanced;
-      } else {
-        dataKey = 'advancedTotals';
         selectedColumnOrder = COLUMN_ORDER.advanced;
       }
 
       let stats = currentData[dataKey] || [];
 
       if (stats.length === 0) {
-        loading.innerHTML = `
-          <div class="no-stats">
-            <h2>No stats available yet</h2>
-            <p>Stats will appear here once uploaded from GameChanger</p>
-          </div>
-        `;
+        loading.innerHTML = '<div class="no-stats"><h2>No stats available yet</h2><p>Stats will appear here once uploaded from GameChanger</p></div>';
         loading.style.display = 'block';
         table.style.display = 'none';
         return;
@@ -631,22 +687,13 @@ function sortByColumn(stats, columnName, currentState) {
 
       stats = reorderColumns(stats, selectedColumnOrder);
       stats = sortByJerseyNumber(stats);
-      
       originalOrder = [...stats];
       
       sortState = {};
       selectedColumnOrder.forEach(col => sortState[col] = 'none');
 
       const thead = document.getElementById('tableHeader');
-      thead.innerHTML = `
-        <tr>
-          ${selectedColumnOrder.map(col => `
-            <th data-column="${col}">
-              ${col}
-            </th>
-          `).join('')}
-        </tr>
-      `;
+      thead.innerHTML = `<tr>${selectedColumnOrder.map(col => `<th data-column="${col}">${col}</th>`).join('')}</tr>`;
 
       thead.querySelectorAll('th').forEach(th => {
         th.addEventListener('click', () => {
@@ -655,41 +702,65 @@ function sortByColumn(stats, columnName, currentState) {
           stats = result.data;
           sortState[columnName] = result.state;
           
-          thead.querySelectorAll('th').forEach(h => {
-            h.classList.remove('sorted-asc', 'sorted-desc');
-          });
-          
-          if (result.state === 'asc') {
-            th.classList.add('sorted-asc');
-          } else if (result.state === 'desc') {
-            th.classList.add('sorted-desc');
-          }
+          thead.querySelectorAll('th').forEach(h => h.classList.remove('sorted-asc', 'sorted-desc'));
+          if (result.state === 'asc') th.classList.add('sorted-asc');
+          else if (result.state === 'desc') th.classList.add('sorted-desc');
           
           renderTableBody(stats, selectedColumnOrder);
         });
       });
 
       renderTableBody(stats, selectedColumnOrder);
-
       loading.style.display = 'none';
       table.style.display = 'table';
     }
 
-    // Handle button clicks
+    function renderTableBody(stats, columns) {
+      const tbody = document.getElementById('tableBody');
+      tbody.innerHTML = stats.map(player => `
+        <tr>
+          ${columns.map((col, idx) => {
+            const value = player[col];
+            const className = idx === 0 ? 'player-name' : '';
+            return `<td class="${className}">${value}</td>`;
+          }).join('')}
+        </tr>
+      `).join('');
+    }
+
     document.querySelectorAll('.btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const view = btn.dataset.view;
+        const subview = btn.dataset.subview;
         const stats = btn.dataset.stats;
 
         if (view) {
-          document.querySelectorAll('[data-view]').forEach(b => 
-            b.classList.remove('active')
-          );
+          document.querySelectorAll('[data-view]').forEach(b => b.classList.remove('active'));
           btn.classList.add('active');
           currentView = view;
           
+          const seasonViewGroup = document.getElementById('seasonViewGroup');
+          const statsTypeGroup = document.getElementById('statsTypeGroup');
+          const gameSelector = document.getElementById('gameSelector');
+          
+          if (view === 'game') {
+            seasonViewGroup.style.display = 'none';
+            statsTypeGroup.style.display = 'none';
+            gameSelector.style.display = 'flex';
+          } else {
+            seasonViewGroup.style.display = 'flex';
+            statsTypeGroup.style.display = 'flex';
+            gameSelector.style.display = 'none';
+          }
+        }
+
+        if (subview) {
+          document.querySelectorAll('[data-subview]').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          currentSubView = subview;
+          
           const statsButtons = document.querySelectorAll('[data-stats]');
-          if (view === 'totals') {
+          if (subview === 'totals') {
             statsButtons[1].style.display = 'none';
             if (currentStats === 'advanced') {
               currentStats = 'standard';
@@ -702,15 +773,18 @@ function sortByColumn(stats, columnName, currentState) {
         }
 
         if (stats) {
-          document.querySelectorAll('[data-stats]').forEach(b => 
-            b.classList.remove('active')
-          );
+          document.querySelectorAll('[data-stats]').forEach(b => b.classList.remove('active'));
           btn.classList.add('active');
           currentStats = stats;
         }
 
         renderTable();
       });
+    });
+
+    document.getElementById('gameSelect').addEventListener('change', (e) => {
+      selectedGameId = e.target.value;
+      renderTable();
     });
 
     setInterval(() => fetchStats(false), 30000);
