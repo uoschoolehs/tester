@@ -330,13 +330,15 @@
         
         // If data changed and we have previous data, create snapshot of OLD data before updating
         if (dataHash && newHash !== dataHash && !forceUpdate && currentData) {
-          console.log('🔄 Data changed detected - creating snapshot of previous state');
+          console.log('🔄 New data detected - snapshotting OLD state before update');
+          console.log('📊 OLD data GP sample:', currentData.standardTotals?.[0]?.GP);
           await createSnapshot(currentData);
-          showRefreshNotification();
-          return;
+          console.log('✅ Old snapshot saved, now loading new data...');
+          // Don't return - continue to load new data after saving old snapshot
         }
         
         console.log('✅ Loading fresh data');
+        console.log('📊 NEW data GP sample:', data.standardTotals?.[0]?.GP);
         dataHash = newHash;
         currentData = data;
         await loadGameLogs();
