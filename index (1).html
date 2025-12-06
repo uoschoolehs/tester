@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EHS JV BBall Stats</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #006554 0%, #004d3f 100%);
+      color: #333;
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    header {
+      text-align: center;
+      color: white;
+      margin-bottom: 40px;
+      padding: 30px 20px;
+    }
+
+    h1 {
+      font-size: 3em;
+      margin-bottom: 10px;
+      text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+    }
+
+    .record {
+      font-size: 1.5em;
+      color: #00F092;
+      font-weight: bold;
+    }
+
+    .last-updated {
+      font-size: 0.9em;
+      color: rgba(255,255,255,0.7);
+      margin-top: 10px;
+    }
+
+    .controls {
+      display: flex;
+      justify-content: center;
+      gap: 20px;
+      margin-bottom: 30px;
+      flex-wrap: wrap;
+    }
+
+    .btn-group {
+      background: white;
+      border-radius: 12px;
+      padding: 5px;
+      display: flex;
+      gap: 5px;
+    }
+
+    .btn {
+      padding: 12px 24px;
+      border: none;
+      background: transparent;
+      color: #666;
+      font-weight: 600;
+      cursor: pointer;
+      border-radius: 8px;
+      transition: all 0.3s;
+      font-size: 14px;
+    }
+
+    .btn:hover {
+      background: #f5f5f5;
+    }
+
+    .btn.active {
+      background: #006554;
+      color: white;
+    }
+
+    .stats-container {
+      background: white;
+      border-radius: 16px;
+      padding: 30px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    thead {
+      background: #f8f9fa;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    th {
+      padding: 15px 12px;
+      text-align: left;
+      font-weight: 700;
+      color: #006554;
+      border-bottom: 2px solid #006554;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      white-space: nowrap;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.2s;
+    }
+
+    th:hover {
+      background: #e8f9f5;
+    }
+
+    th.sorted-desc::after {
+      content: ' ▼';
+      font-size: 10px;
+    }
+
+    th.sorted-asc::after {
+      content: ' ▲';
+      font-size: 10px;
+    }
+
+    td {
+      padding: 12px;
+      border-bottom: 1px solid #eee;
+      font-size: 14px;
+    }
+
+    tr:hover {
+      background: #f8f9fa;
+    }
+
+    .player-name {
+      font-weight: 600;
+      color: #006554;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 60px 20px;
+      color: #666;
+    }
+
+    .spinner {
+      width: 50px;
+      height: 50px;
+      border: 4px solid #f3f3f3;
+      border-top: 4px solid #006554;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 20px;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    .error {
+      background: #fff3cd;
+      border: 1px solid #ffc107;
+      border-radius: 8px;
+      padding: 20px;
+      margin: 20px 0;
+    }
+
+    .error h3 {
+      color: #856404;
+      margin-bottom: 10px;
+    }
+
+    .error p {
+      color: #856404;
+    }
+
+    .no-stats {
+      text-align: center;
+      padding: 40px 20px;
+    }
+
+    .no-stats h2 {
+      color: #006554;
+      margin-bottom: 10px;
+    }
+
+    .no-stats p {
+      color: #666;
+    }
+
+    @media (max-width: 768px) {
+      h1 {
+        font-size: 2em;
+      }
+
+      .stats-container {
+        padding: 15px;
+      }
+
+      th, td {
+        padding: 10px 8px;
+        font-size: 12px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1> Essex High School Junior Varsity <br> Hornets Basketball Stats <br> (Scrimmags only so far) </h1>
+      <div class="record" id="record">Loading...</div>
+      <div class="last-updated" id="lastUpdated"></div>
+    </header>
+
+    <div class="controls">
+      <div class="btn-group">
+        <button class="btn active" data-view="averages">Averages</button>
+        <button class="btn" data-view="totals">Totals</button>
+      </div>
+      <div class="btn-group" id="statsTypeGroup">
+        <button class="btn active" data-stats="standard">Standard</button>
+        <button class="btn" data-stats="advanced">Advanced</button>
+      </div>
+    </div>
+
+    <div class="stats-container">
+      <div class="loading">
+        <div class="spinner"></div>
+        Loading stats...
+      </div>
+      <table id="statsTable" style="display: none;">
+        <thead id="tableHeader"></thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    // Configuration
+    const FIREBASE_URL = 'https://ehs-jv-stats-default-rtdb.firebaseio.com';
+    const TEAM_ID = 'ehs-jv-hornets';
+
+    let currentData = null;
+    let currentView = 'averages';
+    let currentStats = 'standard';
+    let sortState = {};
+    let originalOrder = [];
+    let dataHash = '';
+    let refreshNotification = null;
+
+    // Column order for each stat type
+    const COLUMN_ORDER = {
+      standardAverages: ['Player', 'GP', 'PTS', 'REB', 'AST', 'STL', 'BLK', 'PF', 'FG%', '3PT%', 'FT%', 'TO'],
+      standardTotals: ['Player', 'GP', 'GS', 'PTS', 'REB', 'AST', 'STL', 'BLK', 'PF', 'FG', '3PT', 'FT', 'TO'],
+      advanced: ['Player', 'GP', 'eFG%', 'TS%', 'AST/TO']
+    };
+
+    // Map GameChanger column names to our desired names
+    const COLUMN_MAPPING = {
+      'PLAYER': 'Player',
+      'Player': 'Player',
+      'GP': 'GP',
+      'GS': 'GS',
+      'PPG': 'PTS',
+      'PTS': 'PTS',
+      'PFPG': 'PF',
+      'PF': 'PF',
+      'RPG': 'REB',
+      'REB': 'REB',
+      'APG': 'AST',
+      'AST': 'AST',
+      'SPG': 'STL',
+      'STL': 'STL',
+      'BPG': 'BLK',
+      'BLK': 'BLK',
+      'TOPG': 'TO',
+      'TO': 'TO',
+      'FGPct': 'FG%',
+      'FG': 'FG%',
+      '3PTPct': '3PT%',
+      '3PT': '3PT%',
+      'FTPct': 'FT%',
+      'FT': 'FT%',
+      'eFGPct': 'eFG%',
+      'TSPct': 'TS%',
+      'AST_TO': 'AST/TO'
+    };
+
+    // Fetch stats from Firebase
+    async function fetchStats(forceUpdate = false) {
+      try {
+        const response = await fetch(`${FIREBASE_URL}/teams/${TEAM_ID}.json`);
+        if (!response.ok) throw new Error('Failed to fetch stats');
+        
+        const data = await response.json();
+        const newHash = JSON.stringify(data);
+        
+        // Check if data changed
+        if (!forceUpdate && dataHash && newHash === dataHash) {
+          return; // No changes, don't update
+        }
+        
+        // Data changed or first load
+        if (dataHash && newHash !== dataHash && !forceUpdate) {
+          // Show notification for new data
+          showRefreshNotification();
+          return;
+        }
+        
+        dataHash = newHash;
+        currentData = data;
+        updateHeader(data);
+        renderTable();
+        hideRefreshNotification();
+      } catch (error) {
+        console.error('Error fetching stats:', error);
+        document.querySelector('.stats-container').innerHTML = `
+          <div class="error">
+            <h3>Unable to load stats</h3>
+            <p>Please make sure the extension has uploaded stats at least once.</p>
+          </div>
+        `;
+      }
+    }
+
+    function showRefreshNotification() {
+      if (refreshNotification) return;
+      refreshNotification = document.createElement('div');
+      refreshNotification.style.cssText = 'position:fixed;top:20px;right:20px;background:#00F092;color:#006554;padding:15px 25px;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,0.3);font-weight:600;cursor:pointer;z-index:1000;animation:slideIn 0.3s ease;';
+      refreshNotification.innerHTML = '🔄 New Stats Available - Click to Reload';
+      refreshNotification.onclick = () => fetchStats(true);
+      document.body.appendChild(refreshNotification);
+    }
+
+    function hideRefreshNotification() {
+      if (refreshNotification) {
+        refreshNotification.remove();
+        refreshNotification = null;
+      }
+    }
+
+    // Update header with team info
+    function updateHeader(data) {
+      document.getElementById('record').textContent = data.record || '0-0';
+      
+      if (data.lastUpdated) {
+        const date = new Date(data.lastUpdated);
+        document.getElementById('lastUpdated').textContent = 
+          `Last updated: ${date.toLocaleString()}`;
+      }
+    }
+
+    // Extract jersey number from player name
+    function getJerseyNumber(playerName) {
+      const match = playerName.match(/#(\d+)/);
+      return match ? parseInt(match[1]) : 999;
+    }
+
+    // Sort data by jersey number (default)
+    function sortByJerseyNumber(stats) {
+      return [...stats].sort((a, b) => {
+        const numA = getJerseyNumber(a.Player || '');
+        const numB = getJerseyNumber(b.Player || '');
+        return numA - numB;
+      });
+    }
+
+    // Reorder columns to match desired format
+    function reorderColumns(stats, columnOrder) {
+      return stats.map(player => {
+        const reordered = {};
+        columnOrder.forEach(col => {
+          let value = '';
+          
+          // Special handling for totals shooting stats without %
+          // If looking for 'FG', '3PT', or 'FT', check for the percentage version in source data
+          let searchCol = col;
+          if (currentView === 'totals' && (col === 'FG' || col === '3PT' || col === 'FT')) {
+            searchCol = col + '%';
+          }
+          
+          for (const [sourceCol, targetCol] of Object.entries(COLUMN_MAPPING)) {
+            if (targetCol === searchCol && player[sourceCol] !== undefined) {
+              value = player[sourceCol];
+              break;
+            }
+          }
+          
+          reordered[col] = value;
+        });
+        return reordered;
+      });
+    }
+
+    // Sort by column (cycles through: none -> desc -> asc -> none)
+function sortByColumn(stats, columnName, currentState) {
+  const newState = currentState === 'none' ? 'desc' : 
+                   currentState === 'desc' ? 'asc' : 'none';
+  
+  if (newState === 'none') {
+    return { data: [...originalOrder], state: 'none' };
+  }
+
+  const sorted = [...stats].sort((a, b) => {
+    let valA = a[columnName];
+    let valB = b[columnName];
+
+    // Special handling for shooting splits (FG, 3PT, FT) - ONLY in Totals view with dash format
+    if (currentView === 'totals' && (columnName === 'FG' || columnName === '3PT' || columnName === 'FT')) {
+      
+      const parseShootingStat = (val) => {
+        if (!val || typeof val !== 'string') return { made: 0, attempts: 0 };
+        
+        // Handle "X-Y" format
+        if (val.includes('-')) {
+          const [made, attempts] = val.split('-').map(v => parseInt(v) || 0);
+          return { made, attempts };
+        } else {
+          // Handle percentage format (e.g., "45.6%")
+          return { made: 0, attempts: 0 };
+        }
+      };
+
+      const statsA = parseShootingStat(valA);
+      const statsB = parseShootingStat(valB);
+
+      // If either is 0-0, handle specially
+      const aIsZeroZero = statsA.attempts === 0;
+      const bIsZeroZero = statsB.attempts === 0;
+      
+      if (aIsZeroZero && bIsZeroZero) return 0;
+      if (aIsZeroZero) return 1;  // Move a to bottom
+      if (bIsZeroZero) return -1; // Move b to bottom
+
+      // First compare made shots
+      if (statsA.made !== statsB.made) {
+        return newState === 'desc' ? 
+          statsB.made - statsA.made : 
+          statsA.made - statsB.made;
+      }
+
+      // If made shots are equal, compare attempts (fewer attempts ranks higher)
+      return newState === 'desc' ? 
+        statsA.attempts - statsB.attempts : 
+        statsB.attempts - statsA.attempts;
+    }
+
+    // Handle non-shooting stat columns as before
+    const numA = parseFloat(String(valA).replace('%', ''));
+    const numB = parseFloat(String(valB).replace('%', ''));
+
+    if (!isNaN(numA) && !isNaN(numB)) {
+      return newState === 'desc' ? numB - numA : numA - numB;
+    }
+
+    const strA = String(valA).toLowerCase();
+    const strB = String(valB).toLowerCase();
+    return newState === 'desc' ? 
+      strB.localeCompare(strA) : 
+      strA.localeCompare(strB);
+  });
+
+  return { data: sorted, state: newState };
+}
+
+    // Calculate totals from individual player stats
+    function calculateTotalsFromPlayers(stats, columns) {
+      const totals = {};
+      
+      columns.forEach(col => {
+        if (col === 'Player') {
+          totals[col] = 'Team';
+        } else if (col === 'GP') {
+          if (currentData.teamStandardAverages && currentData.teamStandardAverages.GP) {
+            totals.GP = currentData.teamStandardAverages.GP;
+          } else {
+            totals.GP = '';
+          }
+        } else if (col === 'GS') {
+          totals.GS = '';
+        } else if (col === 'FG' || col === '3PT' || col === 'FT') {
+          let totalMade = 0;
+          let totalAttempted = 0;
+          
+          stats.forEach((player) => {
+            const value = player[col];
+            if (value && typeof value === 'string' && value.includes('-')) {
+              const parts = value.split('-');
+              const made = parseInt(parts[0]) || 0;
+              const attempted = parseInt(parts[1]) || 0;
+              totalMade += made;
+              totalAttempted += attempted;
+            }
+          });
+          
+          totals[col] = `${totalMade}-${totalAttempted}`;
+        } else {
+          let sum = 0;
+          stats.forEach(player => {
+            const value = player[col];
+            const numValue = parseFloat(value);
+            if (!isNaN(numValue)) {
+              sum += numValue;
+            }
+          });
+          totals[col] = sum;
+        }
+      });
+      
+      return totals;
+    }
+
+    // Render table body
+    function renderTableBody(stats, columns) {
+      const tbody = document.getElementById('tableBody');
+      
+      // Get team stats from Firebase
+      let teamStats = null;
+      if (currentStats === 'standard' && currentView === 'averages' && currentData.teamStandardAverages) {
+        teamStats = currentData.teamStandardAverages;
+      } else if (currentStats === 'standard' && currentView === 'totals') {
+        // For Totals/Standard, calculate from player stats instead of using database
+        teamStats = calculateTotalsFromPlayers(stats, columns);
+      } else if (currentStats === 'advanced' && currentView === 'averages' && currentData.teamAdvancedAverages) {
+        teamStats = currentData.teamAdvancedAverages;
+      }
+      
+      let rows = stats.map(player => `
+        <tr>
+          ${columns.map((col, idx) => {
+            const value = player[col];
+            const isPlayerName = idx === 0;
+            const className = isPlayerName ? 'player-name' : '';
+            return `<td class="${className}">${value}</td>`;
+          }).join('')}
+        </tr>
+      `).join('');
+
+      // Add team row if we have team stats
+      if (teamStats) {
+        const reorderedTeam = {};
+        columns.forEach(col => {
+          if (col === 'Player') {
+            reorderedTeam[col] = 'TEAM';
+          } else if (teamStats[col] !== undefined) {
+            // If teamStats already has the column name directly (from calculateTotalsFromPlayers), use it
+            reorderedTeam[col] = teamStats[col];
+          } else {
+            // Otherwise, try to map from GameChanger column names
+            let value = '';
+            for (const [sourceCol, targetCol] of Object.entries(COLUMN_MAPPING)) {
+              if (targetCol === col && teamStats[sourceCol] !== undefined) {
+                value = teamStats[sourceCol];
+                break;
+              }
+            }
+            reorderedTeam[col] = value;
+          }
+        });
+
+        rows += `
+          <tr style="border-top: 2px solid #006554; font-weight: 700; background: #f8f9fa;">
+            ${columns.map((col, idx) => {
+              const value = reorderedTeam[col];
+              const isTeamName = idx === 0;
+              const className = isTeamName ? 'player-name' : '';
+              return `<td class="${className}">${value}</td>`;
+            }).join('')}
+          </tr>
+        `;
+      }
+
+      tbody.innerHTML = rows;
+    }
+
+    // Render the stats table
+    function renderTable() {
+      const table = document.getElementById('statsTable');
+      const loading = document.querySelector('.loading');
+      
+      if (!currentData) {
+        loading.style.display = 'block';
+        table.style.display = 'none';
+        return;
+      }
+
+      let dataKey = '';
+      let selectedColumnOrder = [];
+      
+      if (currentStats === 'standard' && currentView === 'averages') {
+        dataKey = 'standardAverages';
+        selectedColumnOrder = COLUMN_ORDER.standardAverages;
+      } else if (currentStats === 'standard' && currentView === 'totals') {
+        dataKey = 'standardTotals';
+        selectedColumnOrder = COLUMN_ORDER.standardTotals;
+      } else if (currentStats === 'advanced' && currentView === 'averages') {
+        dataKey = 'advancedAverages';
+        selectedColumnOrder = COLUMN_ORDER.advanced;
+      } else {
+        dataKey = 'advancedTotals';
+        selectedColumnOrder = COLUMN_ORDER.advanced;
+      }
+
+      let stats = currentData[dataKey] || [];
+
+      if (stats.length === 0) {
+        loading.innerHTML = `
+          <div class="no-stats">
+            <h2>No stats available yet</h2>
+            <p>Stats will appear here once uploaded from GameChanger</p>
+          </div>
+        `;
+        loading.style.display = 'block';
+        table.style.display = 'none';
+        return;
+      }
+
+      stats = reorderColumns(stats, selectedColumnOrder);
+      stats = sortByJerseyNumber(stats);
+      
+      originalOrder = [...stats];
+      
+      sortState = {};
+      selectedColumnOrder.forEach(col => sortState[col] = 'none');
+
+      const thead = document.getElementById('tableHeader');
+      thead.innerHTML = `
+        <tr>
+          ${selectedColumnOrder.map(col => `
+            <th data-column="${col}">
+              ${col}
+            </th>
+          `).join('')}
+        </tr>
+      `;
+
+      thead.querySelectorAll('th').forEach(th => {
+        th.addEventListener('click', () => {
+          const columnName = th.dataset.column;
+          const result = sortByColumn(stats, columnName, sortState[columnName]);
+          stats = result.data;
+          sortState[columnName] = result.state;
+          
+          thead.querySelectorAll('th').forEach(h => {
+            h.classList.remove('sorted-asc', 'sorted-desc');
+          });
+          
+          if (result.state === 'asc') {
+            th.classList.add('sorted-asc');
+          } else if (result.state === 'desc') {
+            th.classList.add('sorted-desc');
+          }
+          
+          renderTableBody(stats, selectedColumnOrder);
+        });
+      });
+
+      renderTableBody(stats, selectedColumnOrder);
+
+      loading.style.display = 'none';
+      table.style.display = 'table';
+    }
+
+    // Handle button clicks
+    document.querySelectorAll('.btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const view = btn.dataset.view;
+        const stats = btn.dataset.stats;
+
+        if (view) {
+          document.querySelectorAll('[data-view]').forEach(b => 
+            b.classList.remove('active')
+          );
+          btn.classList.add('active');
+          currentView = view;
+          
+          const statsButtons = document.querySelectorAll('[data-stats]');
+          if (view === 'totals') {
+            statsButtons[1].style.display = 'none';
+            if (currentStats === 'advanced') {
+              currentStats = 'standard';
+              statsButtons[0].classList.add('active');
+              statsButtons[1].classList.remove('active');
+            }
+          } else {
+            statsButtons[1].style.display = 'block';
+          }
+        }
+
+        if (stats) {
+          document.querySelectorAll('[data-stats]').forEach(b => 
+            b.classList.remove('active')
+          );
+          btn.classList.add('active');
+          currentStats = stats;
+        }
+
+        renderTable();
+      });
+    });
+
+    setInterval(() => fetchStats(false), 30000);
+    fetchStats(true);
+  </script>
+</body>
+</html>
