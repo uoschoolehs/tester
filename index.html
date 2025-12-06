@@ -283,7 +283,7 @@
   </div>
 
   <script>
-    const FIREBASE_URL = 'https://teststats-223c6-default-rtdb.firebaseio.com/';
+    const FIREBASE_URL = 'https://teststats-223c6-default-rtdb.firebaseio.com';
     const TEAM_ID = 'ehs-jv-hornets';
 
     let currentData = null;
@@ -320,16 +320,23 @@
         if (!response.ok) throw new Error('Failed to fetch stats');
         
         const data = await response.json();
-        const newHash = JSON.stringify(data);
+        
+        // Exclude snapshots from hash comparison
+        const dataForHash = { ...data };
+        delete dataForHash.snapshots;
+        const newHash = JSON.stringify(dataForHash);
         
         if (!forceUpdate && dataHash && newHash === dataHash) return;
         
-        if (dataHash && newHash !== dataHash && !forceUpdate) {
+        // If data changed and we have previous data, create snapshot of OLD data before updating
+        if (dataHash && newHash !== dataHash && !forceUpdate && currentData) {
+          console.log('🔄 Data changed detected - creating snapshot of previous state');
           await createSnapshot(currentData);
           showRefreshNotification();
           return;
         }
         
+        console.log('✅ Loading fresh data');
         dataHash = newHash;
         currentData = data;
         await loadGameLogs();
@@ -337,7 +344,7 @@
         renderTable();
         hideRefreshNotification();
       } catch (error) {
-        console.error('Error fetching stats:', error);
+        console.error('❌ Error fetching stats:', error);
         document.querySelector('.stats-container').innerHTML = `
           <div class="error">
             <h3>Unable to load stats</h3>
@@ -348,42 +355,75 @@
     }
 
     async function createSnapshot(data) {
-      if (!data || !data.standardTotals) return;
+      if (!data || !data.standardTotals) {
+        console.log('⚠️ No standardTotals data to snapshot');
+        return;
+      }
       
       const timestamp = Date.now();
       const snapshot = {
         timestamp,
         date: new Date(timestamp).toISOString(),
+        record: data.record || '0-0',
         players: {}
       };
+
+      console.log(`📸 Creating snapshot for ${data.standardTotals.length} players`);
 
       data.standardTotals.forEach(player => {
         const playerName = player.Player || player.PLAYER;
         if (!playerName) return;
         
+        // Get shooting stats - look for both formats
+        const getFG = () => {
+          if (player.FG && typeof player.FG === 'string' && player.FG.includes('-')) return player.FG;
+          if (player['FG%'] && typeof player['FG%'] === 'string' && player['FG%'].includes('-')) return player['FG%'];
+          return '0-0';
+        };
+        
+        const get3PT = () => {
+          if (player['3PT'] && typeof player['3PT'] === 'string' && player['3PT'].includes('-')) return player['3PT'];
+          if (player['3PT%'] && typeof player['3PT%'] === 'string' && player['3PT%'].includes('-')) return player['3PT%'];
+          return '0-0';
+        };
+        
+        const getFT = () => {
+          if (player.FT && typeof player.FT === 'string' && player.FT.includes('-')) return player.FT;
+          if (player['FT%'] && typeof player['FT%'] === 'string' && player['FT%'].includes('-')) return player['FT%'];
+          return '0-0';
+        };
+        
         snapshot.players[playerName] = {
-          GP: player.GP || 0,
-          PTS: player.PTS || 0,
-          REB: player.REB || 0,
-          AST: player.AST || 0,
-          STL: player.STL || 0,
-          BLK: player.BLK || 0,
-          PF: player.PF || 0,
-          TO: player.TO || 0,
-          FG: player['FG'] || player['FG%'] || '0-0',
-          '3PT': player['3PT'] || player['3PT%'] || '0-0',
-          FT: player['FT'] || player['FT%'] || '0-0'
+          GP: parseInt(player.GP) || 0,
+          PTS: parseInt(player.PTS) || 0,
+          REB: parseInt(player.REB) || 0,
+          AST: parseInt(player.AST) || 0,
+          STL: parseInt(player.STL) || 0,
+          BLK: parseInt(player.BLK) || 0,
+          PF: parseInt(player.PF) || 0,
+          TO: parseInt(player.TO) || 0,
+          FG: getFG(),
+          '3PT': get3PT(),
+          FT: getFT()
         };
       });
 
+      console.log('📊 Snapshot data:', snapshot);
+
       try {
-        await fetch(`${FIREBASE_URL}/teams/${TEAM_ID}/snapshots/${timestamp}.json`, {
+        const saveResponse = await fetch(`${FIREBASE_URL}/teams/${TEAM_ID}/snapshots/${timestamp}.json`, {
           method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(snapshot)
         });
-        console.log('Snapshot created:', timestamp);
+        
+        if (saveResponse.ok) {
+          console.log('✅ Snapshot saved successfully:', timestamp);
+        } else {
+          console.error('❌ Failed to save snapshot:', saveResponse.status);
+        }
       } catch (error) {
-        console.error('Failed to create snapshot:', error);
+        console.error('❌ Error saving snapshot:', error);
       }
     }
 
