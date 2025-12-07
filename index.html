@@ -296,6 +296,7 @@
     let refreshNotification = null;
     let gameLogs = [];
     let selectedGameId = null;
+    let lastSnapshotTaken = false;
 
     const COLUMN_ORDER = {
       standardAverages: ['Player', 'GP', 'PTS', 'REB', 'AST', 'STL', 'BLK', 'PF', 'FG%', '3PT%', 'FT%', 'TO'],
@@ -321,26 +322,66 @@
         
         const data = await response.json();
         
-        // Exclude snapshots from hash comparison
+        // Exclude snapshots and gameLogs from hash comparison
         const dataForHash = { ...data };
         delete dataForHash.snapshots;
+        delete dataForHash.gameLogs;
         const newHash = JSON.stringify(dataForHash);
         
-        if (!forceUpdate && dataHash && newHash === dataHash) return;
-        
-        // If data changed and we have previous data, create snapshot of OLD data before updating
-        if (dataHash && newHash !== dataHash && !forceUpdate && currentData) {
-          console.log('🔄 New data detected - snapshotting OLD state before update');
-          console.log('📊 OLD data GP sample:', currentData.standardTotals?.[0]?.GP);
-          await createSnapshot(currentData);
-          console.log('✅ Old snapshot saved, now loading new data...');
-          // Don't return - continue to load new data after saving old snapshot
+        // FIRST TIME LOAD
+        if (!dataHash) {
+          console.log('🆕 First load - initializing');
+          dataHash = newHash;
+          currentData = data;
+          await loadGameLogs();
+          updateHeader(data);
+          renderTable();
+          return;
         }
         
-        console.log('✅ Loading fresh data');
-        console.log('📊 NEW data GP sample:', data.standardTotals?.[0]?.GP);
+        // NO CHANGE
+        if (!forceUpdate && newHash === dataHash) {
+          console.log('ℹ️ No data changes detected');
+          return;
+        }
+        
+        // DATA CHANGED - This is the critical path
+        console.log('🔄 DATA CHANGE DETECTED!');
+        console.log('================================================');
+        console.log('OLD DATA (currently in memory):');
+        console.log('  - Hash exists:', !!dataHash);
+        console.log('  - currentData exists:', !!currentData);
+        console.log('  - currentData.standardTotals exists:', !!currentData?.standardTotals);
+        if (currentData?.standardTotals?.[0]) {
+          console.log('  - First player:', currentData.standardTotals[0].Player || currentData.standardTotals[0].PLAYER);
+          console.log('  - First player GP:', currentData.standardTotals[0].GP);
+        }
+        console.log('NEW DATA (just fetched from server):');
+        console.log('  - data exists:', !!data);
+        console.log('  - data.standardTotals exists:', !!data?.standardTotals);
+        if (data?.standardTotals?.[0]) {
+          console.log('  - First player:', data.standardTotals[0].Player || data.standardTotals[0].PLAYER);
+          console.log('  - First player GP:', data.standardTotals[0].GP);
+        }
+        console.log('================================================');
+        
+        // Save snapshot of OLD data
+        if (currentData) {
+          console.log('💾 Saving snapshot of OLD data...');
+          await createSnapshot(currentData);
+        }
+        
+        // Calculate and save game log (OLD vs NEW)
+        if (currentData && data) {
+          console.log('🎮 Calculating game log (OLD vs NEW)...');
+          await calculateAndSaveGameLog(currentData, data);
+        }
+        
+        // Update to new data
+        console.log('✅ Updating to NEW data');
         dataHash = newHash;
         currentData = data;
+        
         await loadGameLogs();
         updateHeader(data);
         renderTable();
@@ -356,7 +397,159 @@
       }
     }
 
-    async function createSnapshot(data) {
+    async function calculateAndSaveGameLog(oldData, newData) {
+      console.log('🎯 calculateAndSaveGameLog CALLED');
+      console.log('   oldData exists:', !!oldData);
+      console.log('   oldData.standardTotals exists:', !!oldData?.standardTotals);
+      console.log('   oldData.standardTotals length:', oldData?.standardTotals?.length);
+      console.log('   newData exists:', !!newData);
+      console.log('   newData.standardTotals exists:', !!newData?.standardTotals);
+      console.log('   newData.standardTotals length:', newData?.standardTotals?.length);
+      
+      if (!oldData?.standardTotals || !newData?.standardTotals) {
+        console.log('❌ Missing standardTotals data - ABORTING');
+        return;
+      }
+
+      const timestamp = Date.now();
+      const gameLog = {
+        timestamp,
+        date: new Date(timestamp).toISOString(),
+        record: newData.record || oldData.record || '0-0',
+        players: {}
+      };
+
+      // Create maps for easy lookup
+      const oldPlayers = {};
+      oldData.standardTotals.forEach(p => {
+        const name = p.Player || p.PLAYER;
+        if (name) {
+          oldPlayers[name] = p;
+          console.log(`   📋 OLD: ${name} GP=${p.GP}`);
+        }
+      });
+
+      const newPlayers = {};
+      newData.standardTotals.forEach(p => {
+        const name = p.Player || p.PLAYER;
+        if (name) {
+          newPlayers[name] = p;
+          console.log(`   📋 NEW: ${name} GP=${p.GP}`);
+        }
+      });
+
+      console.log('🔍 Calculating differences...');
+
+      // Calculate differences for each player
+      let playersWithGPIncrease = 0;
+      Object.keys(newPlayers).forEach(playerName => {
+        const oldStats = oldPlayers[playerName] || {};
+        const newStats = newPlayers[playerName];
+
+        const oldGP = parseInt(oldStats.GP) || 0;
+        const newGP = parseInt(newStats.GP) || 0;
+
+        console.log(`   🔎 Checking ${playerName}:`);
+        console.log(`      OLD GP: ${oldGP} (type: ${typeof oldStats.GP}, raw: ${oldStats.GP})`);
+        console.log(`      NEW GP: ${newGP} (type: ${typeof newStats.GP}, raw: ${newStats.GP})`);
+        console.log(`      Difference: ${newGP - oldGP}`);
+        console.log(`      Condition (newGP > oldGP): ${newGP > oldGP}`);
+
+        // Only include players who played (GP increased)
+        if (newGP <= oldGP) {
+          console.log(`      ⏭️ SKIPPING - GP did not increase`);
+          return;
+        }
+
+        playersWithGPIncrease++;
+        console.log(`      ✅ INCLUDING - GP INCREASED!`);
+
+        const parseShooting = (str) => {
+          if (!str || typeof str !== 'string') return { made: 0, att: 0 };
+          if (str.includes('-')) {
+            const [m, a] = str.split('-').map(x => parseInt(x) || 0);
+            return { made: m, att: a };
+          }
+          return { made: 0, att: 0 };
+        };
+
+        const getFG = (player) => {
+          if (player.FG && typeof player.FG === 'string' && player.FG.includes('-')) return player.FG;
+          if (player['FG%'] && typeof player['FG%'] === 'string' && player['FG%'].includes('-')) return player['FG%'];
+          return '0-0';
+        };
+
+        const get3PT = (player) => {
+          if (player['3PT'] && typeof player['3PT'] === 'string' && player['3PT'].includes('-')) return player['3PT'];
+          if (player['3PT%'] && typeof player['3PT%'] === 'string' && player['3PT%'].includes('-')) return player['3PT%'];
+          return '0-0';
+        };
+
+        const getFT = (player) => {
+          if (player.FT && typeof player.FT === 'string' && player.FT.includes('-')) return player.FT;
+          if (player['FT%'] && typeof player['FT%'] === 'string' && player['FT%'].includes('-')) return player['FT%'];
+          return '0-0';
+        };
+
+        const oldFG = parseShooting(getFG(oldStats));
+        const newFG = parseShooting(getFG(newStats));
+        const old3PT = parseShooting(get3PT(oldStats));
+        const new3PT = parseShooting(get3PT(newStats));
+        const oldFT = parseShooting(getFT(oldStats));
+        const newFT = parseShooting(getFT(newStats));
+
+        const playerGameStats = {
+          PTS: (parseInt(newStats.PTS) || 0) - (parseInt(oldStats.PTS) || 0),
+          REB: (parseInt(newStats.REB) || 0) - (parseInt(oldStats.REB) || 0),
+          AST: (parseInt(newStats.AST) || 0) - (parseInt(oldStats.AST) || 0),
+          STL: (parseInt(newStats.STL) || 0) - (parseInt(oldStats.STL) || 0),
+          BLK: (parseInt(newStats.BLK) || 0) - (parseInt(oldStats.BLK) || 0),
+          PF: (parseInt(newStats.PF) || 0) - (parseInt(oldStats.PF) || 0),
+          TO: (parseInt(newStats.TO) || 0) - (parseInt(oldStats.TO) || 0),
+          FG: `${newFG.made - oldFG.made}-${newFG.att - oldFG.att}`,
+          '3PT': `${new3PT.made - old3PT.made}-${new3PT.att - old3PT.att}`,
+          FT: `${newFT.made - oldFT.made}-${newFT.att - oldFT.att}`
+        };
+
+        console.log(`      📊 Game stats: ${playerGameStats.PTS} PTS, ${playerGameStats.FG} FG`);
+        gameLog.players[playerName] = playerGameStats;
+      });
+
+      console.log(`📊 SUMMARY: ${playersWithGPIncrease} players had GP increase`);
+      console.log(`📦 Game log object:`, gameLog);
+
+      if (playersWithGPIncrease === 0) {
+        console.log('⚠️ NO PLAYERS WITH GP INCREASE - NOT SAVING GAME LOG');
+        return;
+      }
+
+      // Save game log to Firebase
+      console.log('💾 Attempting to save to Firebase...');
+      try {
+        const saveResponse = await fetch(`${FIREBASE_URL}/teams/${TEAM_ID}/gameLogs/${timestamp}.json`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(gameLog)
+        });
+
+        console.log('   Response status:', saveResponse.status);
+        console.log('   Response ok:', saveResponse.ok);
+
+        if (saveResponse.ok) {
+          const savedData = await saveResponse.json();
+          console.log('✅ GAME LOG SAVED SUCCESSFULLY!');
+          console.log('   Timestamp:', timestamp);
+          console.log('   Saved data:', savedData);
+        } else {
+          const errorText = await saveResponse.text();
+          console.error('❌ FAILED TO SAVE GAME LOG');
+          console.error('   Status:', saveResponse.status);
+          console.error('   Error:', errorText);
+        }
+      } catch (error) {
+        console.error('❌ EXCEPTION WHILE SAVING GAME LOG:', error);
+      }
+    }
       if (!data || !data.standardTotals) {
         console.log('⚠️ No standardTotals data to snapshot');
         return;
