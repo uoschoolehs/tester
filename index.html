@@ -397,7 +397,13 @@
       }
     }
 
-    async function calculateAndSaveGameLog(oldData, newData) {
+    async function createSnapshot(data) {
+      if (!data || !data.standardTotals) {
+        console.log('⚠️ No standardTotals data to snapshot');
+        return;
+      }
+      
+      const timestamp = Date.now();
       console.log('🎯 calculateAndSaveGameLog CALLED');
       console.log('   oldData exists:', !!oldData);
       console.log('   oldData.standardTotals exists:', !!oldData?.standardTotals);
@@ -410,8 +416,6 @@
         console.log('❌ Missing standardTotals data - ABORTING');
         return;
       }
-
-      const timestamp = Date.now();
       const gameLog = {
         timestamp,
         date: new Date(timestamp).toISOString(),
